@@ -1,5 +1,5 @@
 # Visible Guided Pedestrian Detection
-
+[![image](picture or gif url)](https://github.com/willy20104368/Visible-Guided-Pedestrian-Detection/blob/main/overall.png)
 ## Training anchor-based
 ```
 python train_aux_MR.py --workers 8 --device 2 --batch-size 2 --data data/CityPerson_fg.yaml --img 2048 2048 --cfg cfg/training/VGPD_ab.yaml --weights '' --name VGPD_ab --epochs 300 --hyp data/hyp.scratch.rep.yaml --adam
