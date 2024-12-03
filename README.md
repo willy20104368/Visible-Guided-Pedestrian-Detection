@@ -1,9 +1,9 @@
 # Visible Guided Pedestrian Detection
 ![image](https://github.com/willy20104368/Visible-Guided-Pedestrian-Detection/blob/main/overall.png)
 The main ideas are as follows:
--RepC4ELAN-CA: Enhancing representation capability without introducing any time increment.
--Visible Guided Auxiliary head: Learns information from the visible region and is removed during inference.
--Visible-guided label assignment: Constrains the number and positions of extremely hard positive samples.
+- RepC4ELAN-CA: Enhancing representation capability without introducing any time increment.
+- Visible Guided Auxiliary head: Learns information from the visible region and is removed during inference.
+- Visible-guided label assignment: Constrains the number and positions of extremely hard positive samples.
 ## Training anchor-based
 ```
 python train_aux_MR.py --workers 8 --device 2 --batch-size 2 --data data/CityPerson_fg.yaml --img 2048 2048 --cfg cfg/training/VGPD_ab.yaml --weights '' --name VGPD_ab --epochs 300 --hyp data/hyp.scratch.rep.yaml --adam
