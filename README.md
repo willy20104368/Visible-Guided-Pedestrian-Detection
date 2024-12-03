@@ -3,6 +3,7 @@
 ## Training anchor-based
 ```
 python train_aux_MR.py --workers 8 --device 2 --batch-size 2 --data data/CityPerson_fg.yaml --img 2048 2048 --cfg cfg/training/VGPD_ab.yaml --weights '' --name VGPD_ab --epochs 300 --hyp data/hyp.scratch.rep.yaml --adam
+
 ```
 ## Training anchor-free
 ```
@@ -16,3 +17,6 @@ python evaluate_MR.py --weights path_to_weight --data data/CityPerson.yaml --img
 ```
 python evaluate_MR.py --weights path_to_weight --data data/CityPerson.yaml --img-size 2048 --task val --project Thesis_result --name VGPD_AF_CP --device 1 --batch-size 8 --save-mr --conf 0.001 --iou 0.7 --deploy --anchor-free --no-trace
 ```
+
+## Reference
+[YOLOv7](https://github.com/WongKinYiu/yolov7?tab=readme-ov-file#training)
