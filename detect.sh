@@ -1,0 +1,1 @@
+python detect.py --weights cfg/Thesis_deploy/ckpt/VGPD_ab.pt --source CityPerson/images/val/ --device 1 --img 2048 --conf 0.1 --iou 0.65 --project Thesis_visualize --name VGPD_anchor_based

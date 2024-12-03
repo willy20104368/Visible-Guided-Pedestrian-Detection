@@ -1,0 +1,10 @@
+# image path
+train: ./CityPerson/train_fg.txt
+val: ./CityPerson/val.txt
+test: ./CityPerson/val.txt
+
+# number of classes
+nc: 1
+
+# class names
+names: ['Person']
