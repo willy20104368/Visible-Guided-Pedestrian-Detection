@@ -313,19 +313,6 @@ class TaskAlignedAssigner_Guided(nn.Module):
 
         return target_labels, target_bboxes, target_scores, fg_mask.bool()
 
-    # def get_pos_mask(self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt):
-
-    #     # get anchor_align metric, (b, max_num_obj, h*w)
-    #     align_metric, overlaps = self.get_box_metrics(pd_scores, pd_bboxes, gt_labels, gt_bboxes)
-    #     # get in_gts mask, (b, max_num_obj, h*w)
-    #     mask_in_gts = select_candidates_in_gts(anc_points, gt_bboxes)
-    #     # get topk_metric mask, (b, max_num_obj, h*w)
-    #     mask_topk = self.select_topk_candidates(align_metric * mask_in_gts,
-    #                                             topk_mask=mask_gt.repeat([1, 1, self.topk]).bool())
-    #     # merge all mask to a final mask, (b, max_num_obj, h*w)
-    #     mask_pos = mask_topk * mask_in_gts * mask_gt
-
-    #     return mask_pos, align_metric, overlaps
     
     # v1
     def get_pos_mask(self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt):
@@ -357,44 +344,6 @@ class TaskAlignedAssigner_Guided(nn.Module):
         align_metric = bbox_scores.pow(self.alpha) * overlaps.pow(self.beta)
         return align_metric, overlaps
 
-
-    # v2
-    # def get_pos_mask(self, pd_scores, pd_bboxes, gt_labels, gt_bboxes,  thres_bboxes, anc_points, mask_gt):
-        
-    #     # get in_gts mask, (b, max_num_obj, h*w)
-    #     mask_in_gts = select_candidates_in_gts(anc_points, thres_bboxes)
-    #     # get anchor_align metric, (b, max_num_obj, h*w)
-    #     align_metric, overlaps = self.get_box_metrics(pd_scores, pd_bboxes, gt_labels, gt_bboxes, mask_gt * mask_in_gts)
-    #     # get topk_metric mask, (b, max_num_obj, h*w)
-    #     mask_topk = self.select_topk_candidates(align_metric * mask_in_gts,
-    #                                             topk_mask=mask_gt.repeat([1, 1, self.topk]).bool())
-    #     # merge all mask to a final mask, (b, max_num_obj, h*w)
-    #     mask_pos = mask_topk * mask_in_gts * mask_gt
-
-    #     return mask_pos, align_metric, overlaps
-
-    # # v2
-    # def get_box_metrics(self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, mask_gt):
-    #     """Compute alignment metric given predicted and ground truth bounding boxes."""
-    #     na = pd_bboxes.shape[-2]
-    #     mask_gt = mask_gt.bool()  # b, max_num_obj, h*w
-    #     overlaps = torch.zeros([self.bs, self.n_max_boxes, na], dtype=pd_bboxes.dtype, device=pd_bboxes.device)
-    #     bbox_scores = torch.zeros([self.bs, self.n_max_boxes, na], dtype=pd_scores.dtype, device=pd_scores.device)
-
-    #     ind = torch.zeros([2, self.bs, self.n_max_boxes], dtype=torch.long)  # 2, b, max_num_obj
-    #     ind[0] = torch.arange(end=self.bs).view(-1, 1).expand(-1, self.n_max_boxes)  # b, max_num_obj
-    #     ind[1] = gt_labels.squeeze(-1)  # b, max_num_obj
-    #     # Get the scores of each grid for each gt cls
-    #     bbox_scores[mask_gt] = pd_scores[ind[0], :, ind[1]][mask_gt]  # b, max_num_obj, h*w
-
-    #     # (b, max_num_obj, 1, 4), (b, 1, h*w, 4)
-    #     pd_boxes = pd_bboxes.unsqueeze(1).expand(-1, self.n_max_boxes, -1, -1)[mask_gt]
-    #     gt_boxes = gt_bboxes.unsqueeze(2).expand(-1, -1, na, -1)[mask_gt]
-    #     overlaps[mask_gt] = bbox_iou(gt_boxes, pd_boxes, xywh=False, CIoU=True).squeeze(-1).clamp_(0)
-
-    #     align_metric = bbox_scores.pow(self.alpha) * overlaps.pow(self.beta)
-    #     return align_metric, overlaps
-    
     
     
 

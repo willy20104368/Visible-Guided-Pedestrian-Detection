@@ -35,8 +35,7 @@ from utils.plots import plot_images, plot_labels, plot_results, plot_evolution, 
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 # anchor-free loss
-from anchor_free.loss_tal import ComputeLoss, ComputeLoss_aux, ComputeLoss_aux_rep, ComputeLoss_aux_rep_triple, ComputeLoss_aux_end2end,\
-    ComputeLoss_aux_rep_offset, ComputeLoss_aux_rep_end2end_dual
+from anchor_free.loss_tal import ComputeLoss, ComputeLoss_aux, ComputeLoss_aux_rep, ComputeLoss_aux_end2end
 
 logger = logging.getLogger(__name__)
 
@@ -358,28 +357,12 @@ def train(hyp, opt, device, tb_writer=None):
     # init loss class
     if 'loss_rep' in hyp and hyp['loss_rep'] == 1:
         logger.info("train with Replusion loss")
-        if opt.triple:
-            logger.info("train with triple head")
-            compute_loss_aux = ComputeLoss_aux_rep_triple(model)
-        elif opt.end2end:
+        if opt.end2end:
             compute_loss_aux = ComputeLoss_aux_rep_triple(model,tal_topk=1,vis_guide=True,vis_thres=opt.vis_thres)
-        elif opt.offset:
-            logger.info("train the model with offest branch")
-            compute_loss_aux = ComputeLoss_aux_rep_offset(model)
         else:
-            # if opt.Caltech:
-            #     logger.info('topk=15')
-            #     compute_loss_aux = ComputeLoss_aux_rep(model, tal_topk=15)
-            # else:
-            # compute_loss_aux = ComputeLoss_aux_rep(model,tal_topk=10,vis_guide=opt.Caltech)
             compute_loss_aux = ComputeLoss_aux_rep(model,tal_topk=10,vis_guide=True,vis_thres=opt.vis_thres)
     else:
-        if opt.end2end:
-            # compute_loss_aux = ComputeLoss_aux_rep_end2end_dual(model)
-            exit()
-            # compute_loss_aux = ComputeLoss_aux_end2end(model)
-        else:
-            compute_loss_aux = ComputeLoss_aux(model)
+        compute_loss_aux = ComputeLoss_aux(model)
 
     compute_loss = ComputeLoss(model)  
     
@@ -475,20 +458,12 @@ def train(hyp, opt, device, tb_writer=None):
             # Backward
             scaler.scale(loss).backward()
 
-            for name, param in model.named_parameters():
-                if param.grad is None and 'dfl' not in name:
-                    logger.info(name)
+            # for name, param in model.named_parameters():
+            #     if param.grad is None and 'dfl' not in name:
+            #         logger.info(name)
             
-            # print('OK')
-            # exit()
+
             # Optimize
-            # if ni % accumulate == 0:
-            #     scaler.step(optimizer)  # optimizer.step
-            #     scaler.update()
-            #     optimizer.zero_grad()
-            #     if ema:
-            #         ema.update(model)
-            
             # no clip gradient
             # if ni - last_opt_step >= accumulate:
             #     scaler.step(optimizer)  # optimizer.step
@@ -509,21 +484,6 @@ def train(hyp, opt, device, tb_writer=None):
                     ema.update(model)
                 last_opt_step = ni
 
-            # results, maps, times, mean_MR = test_MR.test(data_dict,
-            #                                      batch_size=batch_size * 2,
-            #                                      imgsz=imgsz_test,
-            #                                      model=model,
-            #                                      single_cls=opt.single_cls,
-            #                                      dataloader=testloader,
-            #                                      save_dir=save_dir,
-            #                                      wandb_logger=wandb_logger,
-            #                                      compute_loss=compute_loss,
-            #                                      is_coco=is_coco,
-            #                                      MR2=True,
-            #                                      v5_metric=opt.v5_metric,
-            #                                      TJU=opt.TJU,
-            #                                      Caltech=opt.Caltech,
-            #                                      )
             # Print
             if rank in [-1, 0]:
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
@@ -761,8 +721,6 @@ if __name__ == '__main__':
     parser.add_argument('--cutoff', type=int, default=51, help='Model layer cutoff index for Classify() head')
     parser.add_argument('--end2end', action='store_true', help='Train end2end anchor free model')
     parser.add_argument('--nms', action='store_true', help='Train one to one label anchor free model with nms')
-    parser.add_argument('--offset', action='store_true', help='Train the model with offest branch')
-    parser.add_argument('--triple', action='store_true', help='2 visible aux head')
     parser.add_argument('--vis-thres', type=float, default=0.4, help='visible guided label assignment threshold')
     opt = parser.parse_args()
 

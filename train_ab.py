@@ -32,15 +32,12 @@ from utils.general import labels_to_class_weights, increment_path, labels_to_ima
     check_requirements, print_mutation, set_logging, one_cycle, colorstr
 from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss  
-from utils.loss_aux import ComputeLossAuxOTA_v2, ComputeLossAuxOTA_v2_rep, ComputeLossAuxOTA_v2_rep_Guide
+from utils.loss_aux import ComputeLossAuxOTA_v2, ComputeLossAuxOTA_v2_rep
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution, plot_lr_scheduler
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
 logger = logging.getLogger(__name__)
-# gc.collect()
-# torch.cuda.empty_cache() 
-# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:INT_MAX"
 
 def get_lr(optimizer):
     lr_groups = []
@@ -253,29 +250,29 @@ def train(hyp, opt, device, tb_writer=None):
         start_epoch, best_fitness = 0, 0.0
     if pretrained:
         # Optimizer
-        # if ckpt['optimizer'] is not None:
-        #     logger.info("Load Optimizer")
-        #     optimizer.load_state_dict(ckpt['optimizer'])
-        #     best_fitness = ckpt['best_fitness']
+        if ckpt['optimizer'] is not None:
+            logger.info("Load Optimizer")
+            optimizer.load_state_dict(ckpt['optimizer'])
+            best_fitness = ckpt['best_fitness']
 
-        # # # EMA
-        # if ema and ckpt.get('ema'):
-        #     logger.info("load EMA")
-        #     ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
-        #     ema.updates = ckpt['updates']
+        # # EMA
+        if ema and ckpt.get('ema'):
+            logger.info("load EMA")
+            ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
+            ema.updates = ckpt['updates']
 
-        # # # Results
-        # if ckpt.get('training_results') is not None:
-        #     results_file.write_text(ckpt['training_results'])  # write results.txt
+        # # Results
+        if ckpt.get('training_results') is not None:
+            results_file.write_text(ckpt['training_results'])  # write results.txt
 
-        # # Epochs
-        # start_epoch = ckpt['epoch'] + 1
-        # if opt.resume:
-        #     assert start_epoch > 0, '%s training to %g epochs is finished, nothing to resume.' % (weights, epochs)
-        # if epochs < start_epoch:
-        #     logger.info('%s has been trained for %g epochs. Fine-tuning for %g additional epochs.' %
-        #                 (weights, ckpt['epoch'], epochs))
-        #     epochs += ckpt['epoch']  # finetune additional epochs
+        # Epochs
+        start_epoch = ckpt['epoch'] + 1
+        if opt.resume:
+            assert start_epoch > 0, '%s training to %g epochs is finished, nothing to resume.' % (weights, epochs)
+        if epochs < start_epoch:
+            logger.info('%s has been trained for %g epochs. Fine-tuning for %g additional epochs.' %
+                        (weights, ckpt['epoch'], epochs))
+            epochs += ckpt['epoch']  # finetune additional epochs
 
         del ckpt, state_dict
 
@@ -350,28 +347,14 @@ def train(hyp, opt, device, tb_writer=None):
     scheduler.last_epoch = start_epoch - 1  # do not move
     scaler = amp.GradScaler(enabled=cuda)
     if hyp['loss_rep'] == 1:
-        # if 'loss_wgt' in hyp and hyp['loss_wgt'] == 1:
-        #     compute_loss_ota = ComputeLossAuxOTA_v3_rep(model)
-        #     print('Using weighted iou loss')
-        # if 'loss_den' in hyp and hyp['loss_den'] == 1:
-        #     compute_loss_ota = ComputeLossAuxOTA_v2_rep_den(model)
-        #     logger.info('Using attribute loss')
-        # elif 'loss_den_v2' in hyp and hyp['loss_den_v2'] == 1:
-        #     compute_loss_ota = ComputeLossAuxOTA_v2_rep_den_v2(model)
-        #     logger.info('Using attribute loss v2')
-        if opt.VG:
-            logger.info("visible Guided")
-            compute_loss_ota = ComputeLossAuxOTA_v2_rep_Guide(model)
-        else:
             compute_loss_ota = ComputeLossAuxOTA_v2_rep(model, visible= not opt.noVis)
         logger.info('Using Rep loss')
         if hyp['alpha'] == 0:
             logger.info("Only use Rep_Box loss")
     else:
-        compute_loss_ota = ComputeLossAuxOTA_v2(model, visible= not opt.noVis)  # init loss class
+        compute_loss_ota = ComputeLossAuxOTA_v2(model, visible= not opt.noVis)  # no replusion loss
         logger.info('Not Using Rep loss')
-    # if hyp['was'] != 0:
-    #     print('Using Wasserstein loss')
+   
     compute_loss = ComputeLoss(model)  # init loss class
     logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
                 f'Using {dataloader.num_workers} dataloader workers\n'
@@ -416,9 +399,8 @@ def train(hyp, opt, device, tb_writer=None):
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
-        if 'loss_den' in hyp or 'loss_den_v2' in hyp:
-            logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'attr', 'rep', 'total', 'img_size'))
-        elif hyp['loss_rep'] == 1:
+       
+        if hyp['loss_rep'] == 1:
             logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'rep', 'total', 'img_size'))
         else:
             logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
@@ -450,13 +432,8 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Forward
             with amp.autocast(enabled=cuda):
-                # pred = model(imgs)  # forward
-                if 'loss_den' in hyp or 'loss_den_v2' in hyp:
-                    pred, density = model(imgs)  # forward
-                    loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs, density)
-                else:
-                    pred = model(imgs)  # forward
-                    loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
+                pred = model(imgs)  # forward
+                loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
                 if rank != -1:
                     loss *= opt.world_size  # gradient averaged between devices in DDP mode
                 if opt.quad:
@@ -465,27 +442,11 @@ def train(hyp, opt, device, tb_writer=None):
             # Backward
             scaler.scale(loss).backward()
 
-            for name, param in model.named_parameters():
-                if param.grad is None:
-                    print(name)
-            # results, maps, times, mean_MR = test_MR.test(data_dict,
-            #                                      batch_size=batch_size * 2,
-            #                                      imgsz=imgsz_test,
-            #                                      model=ema.ema,
-            #                                      single_cls=opt.single_cls,
-            #                                      dataloader=testloader,
-            #                                      save_dir=save_dir,
-            #                                      wandb_logger=wandb_logger,
-            #                                      compute_loss=compute_loss,
-            #                                      is_coco=is_coco,
-            #                                      MR2=True,
-            #                                      v5_metric=opt.v5_metric,
-            #                                      TJU=opt.TJU,
-            #                                      Caltech=opt.Caltech,
-            #                                      attrnms=(True if 'loss_den' in hyp or 'loss_den_v2' in hyp else False))
-            # print('OK')
-            # exit()
-
+            # check gradient
+            # for name, param in model.named_parameters():
+            #     if param.grad is None:
+            #         print(name)
+           
             # Optimize
             # no clip gradient
             if ni % accumulate == 0:
@@ -740,7 +701,6 @@ if __name__ == '__main__':
     parser.add_argument('--noVis', action='store_true', help='Use yolov7 Guided coarse to fine label assignment')
     parser.add_argument('--stageLR', action='store_true', help='Use small lr from imagenet backbone')
     parser.add_argument('--cutoff', type=int, default=51, help='Model layer cutoff index for Classify() head')
-    parser.add_argument('--VG', action='store_true', help='visible guided lead head')
     opt = parser.parse_args()
 
     # Set DDP variables

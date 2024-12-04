@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 from threading import Thread
-import glob
+
 import numpy as np
 import torch
 import yaml
@@ -11,8 +11,8 @@ from tqdm import tqdm
 
 from models.experimental import attempt_load
 from utils.datasets import create_dataloader
-from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, check_requirements, non_max_suppression,xyxy2xywh, xywh2xyxy,\
-    box_iou, non_max_suppression_v6, scale_coords, xyxy2xywh_v6, xywh2xyxy_v6, set_logging, increment_path, colorstr, end2end_postprocessing
+from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, check_requirements, \
+    box_iou, non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, colorstr, attr_nms
 from utils.metrics import ap_per_class, ConfusionMatrix
 from utils.plots import plot_images, output_to_target, plot_study_txt
 from utils.torch_utils import select_device, time_synchronized, TracedModel
@@ -24,6 +24,7 @@ def test(data,
          imgsz=640,
          conf_thres=0.001,
          iou_thres=0.65,  # for NMS
+         save_json=False,
          single_cls=False,
          augment=False,
          verbose=False,
@@ -40,7 +41,9 @@ def test(data,
          trace=False,
          is_coco=False,
          v5_metric=False,
-         end2end=False,
+         attrnms=False,
+         TJU=False,
+         Caltech=False,
          anchor_free=False):
     # Initialize/load model and set device
     training = model is not None
@@ -52,8 +55,8 @@ def test(data,
         device = select_device(opt.device, batch_size=batch_size)
 
         # Directories
-        save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=True))  # increment run
-        save_dir.mkdir(parents=True, exist_ok=True)  # make dir
+        save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
+        (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
         model = attempt_load(weights, map_location=device)  # load FP32 model
@@ -67,9 +70,6 @@ def test(data,
     half = device.type != 'cpu' and half_precision  # half precision only supported on CUDA
     if half:
         model.half()
-        print('float 16')
-    else:
-        print('float 32')
 
     # Configure
     model.eval()
@@ -87,12 +87,12 @@ def test(data,
     if wandb_logger and wandb_logger.wandb:
         log_imgs = min(wandb_logger.log_imgs, 100)
     # Dataloader
-    if not training:
-        if device.type != 'cpu':
-            model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
-        task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
-        dataloader = create_dataloader(data[task], imgsz, batch_size, gs, opt, pad=0.5, rect=True,
-                                       prefix=colorstr(f'{task}: '))[0]
+    # if not training:
+    #     if device.type != 'cpu':
+    #         model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
+    #     task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
+    #     dataloader = create_dataloader(data[task], imgsz, batch_size, gs, opt, pad=0.5, rect=True,
+    #                                    prefix=colorstr(f'{task}: '))[0]
 
     # if v5_metric:
     #     print("Testing with YOLOv5 AP metric...")
@@ -105,10 +105,16 @@ def test(data,
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
-    anno_json = './evaluate_gt/val_gt.json'  # annotations json
-    # anno_json = './TJU-Pedestrian-Traffic/labels_json/val/dhd_pedestrian_traffic_val.json'
-    with open(anno_json) as f:
-        ann = json.load(f)
+    if MR2:
+        if TJU:
+            anno_json = './TJU-Pedestrian-Traffic/labels_json/val/dhd_pedestrian_traffic_val.json'  # annotations json
+        elif Caltech:
+            anno_json = './Caltech/val.json'
+        else:
+            anno_json = './MR2_evaluate/CityPerson_val.json'  # annotations json
+        with open(anno_json) as f:
+            ann = json.load(f)
+        
     for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
         img = img.to(device, non_blocking=True)
         img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -119,24 +125,27 @@ def test(data,
         with torch.no_grad():
             # Run model
             t = time_synchronized()
-            out, train_out = model(img, augment=augment)  # inference and training outputs
+            if attrnms:
+                out, train_out, attr= model(img, augment=augment)
+            else:
+                out, train_out= model(img, augment=augment)  # inference and training outputs
+                # out, train_out, attr= model(img, augment=augment)
+            # out, train_out = model(img, augment=augment)
             t0 += time_synchronized() - t
 
             # Compute loss
             if compute_loss:
-                loss += compute_loss([x.float() for x in train_out], targets)[1][:3]  # box, obj, cls
+                if anchor_free:
+                    loss += compute_loss(train_out, targets)[1]
+                else:
+                    loss += compute_loss([x.float() for x in train_out], targets)[1][:3]  # box, obj, cls
 
             # Run NMS
             targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
             lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
             t = time_synchronized()
-            if anchor_free:
-                if end2end:
-                    out = end2end_postprocessing(out, conf_thres=conf_thres, labels=lb, multi_label=True)
-                else:
-                    out = non_max_suppression_v6(out, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True)
-            else:
-                out = non_max_suppression(out, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True)
+        
+            out = non_max_suppression(out, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True)
             t1 += time_synchronized() - t
 
         # Statistics per image
@@ -155,70 +164,93 @@ def test(data,
             # Predictions
             predn = pred.clone()
             scale_coords(img[si].shape[1:], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
-            # print(img[si].shape[1:], shapes[si][0], shapes[si][1])
-            # exit()
+
             # Append to text file
             if MR2:
                 gn = torch.tensor(shapes[si][0])[[1, 0, 1, 0]]  # normalization gain whwh
                 for *xyxy, conf, cls in predn.tolist():
-                    ## CityPerson
-                    image_id = int(path.stem) if path.stem.isnumeric() else path.stem
-                    image_id = image_id + '.png'
-                    if anchor_free:
-                        xywh = (xyxy2xywh_v6(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                    else:
+                    if TJU:
+                        image_id = int(path.stem) if path.stem.isnumeric() else path.stem
+                        image_id = str(image_id) + '.jpg'
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                    for im in ann['images']:
-                        image_name = im['im_name']
-                        if image_id == image_name:
-                            id = im['id']
-                            height = im['height']
-                            width = im['width']
-                            break
-                        else:
-                            id = None
-                    if id == None:
-                        print("Cannot match the image information with GT")
-                    # only for non resize images
-                    w = float(xywh[2]) * width
-                    h = float(xywh[3]) * height
-                    x = float(xywh[0]) * width - w / 2.0
-                    y = float(xywh[1]) * height - h / 2.0
-                    bbox = [x, y, w, h]
 
-                    jdict.append({"image_id":id,
-                                  "category_id":1,
-                                  "bbox":bbox,
-                                  "score":conf})
-                    
-                    ## TJU-Ped-Traffic
-                    # image_id = int(path.stem) if path.stem.isnumeric() else path.stem
-                    # image_id = str(image_id) + '.jpg'
-                    # xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                        for im in ann['images']:
+                            image_name = im['file_name']
+                            if image_id == image_name:
+                                id = im['id']
+                                height = im['height']
+                                width = im['width']
+                                break
+                            else:
+                                id = None
+                                height = None
+                                width = None
+                        if id == None:
+                            print("Cannot match the image information with GT")
+                        
+                        w = float(xywh[2]) * width
+                        h = float(xywh[3]) * height
+                        x = float(xywh[0]) * width - w / 2.0
+                        y = float(xywh[1]) * height - h / 2.0
+                        bbox = [x, y, w, h]
 
-                    # for im in ann['images']:
-                    #     image_name = im['file_name']
-                    #     if image_id == image_name:
-                    #         id = im['id']
-                    #         height = im['height']
-                    #         width = im['width']
-                    #         break
-                    #     else:
-                    #         id = None
-                    # if id == None:
-                    #     print("Cannot match the image information with GT")
-                    
-                    # w = float(xywh[2]) * width
-                    # h = float(xywh[3]) * height
-                    # x = float(xywh[0]) * width - w / 2.0
-                    # y = float(xywh[1]) * height - h / 2.0
-                    # bbox = [x, y, w, h]
+                        jdict.append({"image_id":id,
+                                    "category_id":1,
+                                    "bbox":bbox,
+                                    "score":conf})
+                    elif Caltech:
+                        image_id = int(path.stem) if path.stem.isnumeric() else path.stem
+                        image_id = image_id + '.png'
+                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                        for im in ann['images']:
+                            image_name = im['file_name']
+                            if image_id == image_name:
+                                id = im['id']
+                                height = im['height']
+                                width = im['width']
+                                break
+                            else:
+                                id = None
+                        if id == None:
+                            print("Cannot match the image information with GT")
+                        # only for non resize images
+                        w = float(xywh[2]) * width
+                        h = float(xywh[3]) * height
+                        x = float(xywh[0]) * width - w / 2.0
+                        y = float(xywh[1]) * height - h / 2.0
+                        bbox = [x, y, w, h]
 
-                    # jdict.append({"image_id":id,
-                    #               "category_id":1,
-                    #               "bbox":bbox,
-                    #               "score":conf})
-
+                        jdict.append({"image_id":id,
+                                    "category_id":1,
+                                    "bbox":bbox,
+                                    "score":conf})
+                    else:
+                        image_id = int(path.stem) if path.stem.isnumeric() else path.stem
+                        image_id = image_id + '.png'
+                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                        for im in ann['images']:
+                            image_name = im['im_name']
+                            if image_id == image_name:
+                                id = im['id']
+                                height = im['height']
+                                width = im['width']
+                                break
+                            else:
+                                id = None
+                                height = None
+                                width = None
+                        if id == None:
+                            print("Cannot match the image information with GT")
+                        w = float(xywh[2]) * width
+                        h = float(xywh[3]) * height
+                        x = float(xywh[0]) * width - w / 2.0
+                        y = float(xywh[1]) * height - h / 2.0
+                        bbox = [x, y, w, h]
+                        
+                        jdict.append({"image_id":id,
+                                    "category_id":1,
+                                    "bbox":bbox,
+                                    "score":conf})
             # W&B logging - Media Panel Plots
             if len(wandb_images) < log_imgs and wandb_logger.current_epoch > 0:  # Check for test operation
                 if wandb_logger.current_epoch % wandb_logger.bbox_interval == 0:
@@ -250,10 +282,7 @@ def test(data,
                 tcls_tensor = labels[:, 0]
 
                 # target boxes
-                if anchor_free:
-                    tbox = xywh2xyxy_v6(labels[:, 1:5])
-                else:
-                    tbox = xywh2xyxy(labels[:, 1:5])
+                tbox = xywh2xyxy(labels[:, 1:5])
                 scale_coords(img[si].shape[1:], tbox, shapes[si][0], shapes[si][1])  # native-space labels
                 if plots:
                     confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
@@ -308,10 +337,9 @@ def test(data,
 
     # Print speeds
     t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (imgsz, imgsz, batch_size)  # tuple
-    metric = (p[0]*100, r[0]*100, ap50[0]*100, ap[0]*100)
     if not training:
         print('Speed: %.1f/%.1f/%.1f ms inference/NMS/total per %gx%g image at batch-size %g' % t)
-        print("Precision:%.2f, Recall:%.2f, AP50:%.2f, AP:%.2f" % metric)
+
     # Plots
     if plots:
         confusion_matrix.plot(save_dir=save_dir, names=list(names.values()))
@@ -324,26 +352,26 @@ def test(data,
     # Save JSON
     mean_MR = [1., 1., 1., 1.]
     if MR2 and len(jdict):
-        anno_json = './evaluate_gt/val_gt.json'  # annotations json
-        # anno_json = './TJU-Pedestrian-Traffic/labels_json/val/dhd_pedestrian_traffic_val.json'
+        if TJU:
+            anno_json = './TJU-Pedestrian-Traffic/labels_json/val/dhd_pedestrian_traffic_val.json'
+        elif Caltech:
+            anno_json = './Caltech/val.json'
+        else:
+            anno_json = './MR2_evaluate/CityPerson_val.json'  # cp annotations json
         pred_json = str(save_dir / f"predictions.json")  # predictions json
         with open(pred_json, 'w') as f:
             json.dump(jdict, f)
 
         try:
             from MR2_evaluate.detect_all_utils.eval_demo import validate
-            print("Load GT annotation from: {}".format(anno_json))
             mean_MR = validate(anno_json,pred_json)
-            print("Average Miss Rate  (MR) @ Reasonable         [ IoU=0.50      | height=[50:10000000000] | visibility=[0.65:10000000000.00] ] = {}%\n".format(mean_MR[0]*100))
-            print("Average Miss Rate  (MR) @ Reasonable_small   [ IoU=0.50      | height=[50:75] | visibility=[0.65:10000000000.00] ] = {}%\n".format(mean_MR[1]*100))
-            print("Average Miss Rate  (MR) @ Reasonable_occ=heavy [ IoU=0.50      | height=[50:10000000000] | visibility=[0.20:0.65] ] =  {}%\n".format(mean_MR[2]*100))
-            print("Average Miss Rate  (MR) @ All                [ IoU=0.50      | height=[20:10000000000] | visibility=[0.20:10000000000.00] ] = {}%\n".format(mean_MR[3]*100))
+
         except Exception as e:
             print(f'MR2_evaluation unable to run: {e}')
     
     # Print results
     pf = '%20s' + '%12i' * 2 + '%12.3g' * 8  # print format
-    # print(pf % ('all', seen, nt.sum(), mp, mr, map50, map, mean_MR[0], mean_MR[1], mean_MR[2], mean_MR[3]))
+    print(pf % ('all', seen, nt.sum(), mp, mr, map50, map, mean_MR[0], mean_MR[1], mean_MR[2], mean_MR[3]))
     # if save_json and len(jdict):
     #     w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
     #     anno_json = './MR2_evaluate/CityPerson_val.json'  # annotations json
@@ -370,14 +398,13 @@ def test(data,
 
     # Return results
     model.float()  # for training
-    # if not training:
-    #     s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
-    #     print(f"Results saved to {save_dir}{s}")
+    if not training:
+        s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
+        print(f"Results saved to {save_dir}{s}")
     maps = np.zeros(nc) + map
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
-    # return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t, (mean_MR[0], mean_MR[1], mean_MR[2], mean_MR[3])
-    return mean_MR, metric
+    return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t, (mean_MR[0], mean_MR[1], mean_MR[2], mean_MR[3])
 
 
 if __name__ == '__main__':
@@ -393,6 +420,7 @@ if __name__ == '__main__':
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
+    parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
     parser.add_argument('--save-hybrid', action='store_true', help='save label+prediction hybrid results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
     parser.add_argument('--save-json', action='store_true', help='save a cocoapi-compatible JSON results file')
@@ -401,59 +429,45 @@ if __name__ == '__main__':
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
-    parser.add_argument('--best', action='store_true', help='only test best model')
-    parser.add_argument('--anchor-free', action='store_true', help='run model after reparameterization ')
-    parser.add_argument('--end2end', action='store_true', help='run model after reparameterization ')
-    # parser.add_argument('--end2end', action='store_true',help='end to end inference')
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
     print(opt)
     #check_requirements()
 
-    best_MR, metric = test(opt.data,
-                os.path.join(opt.weights[0]),
-                opt.batch_size,
-                opt.img_size,
-                opt.conf_thres,
-                opt.iou_thres,
-                opt.single_cls,
-                opt.augment,
-                opt.verbose,
-                MR2=True,
-                save_hybrid=opt.save_hybrid,
-                save_conf=opt.save_conf,
-                trace=not opt.no_trace,
-                v5_metric=opt.v5_metric,
-                half_precision=True,
-                anchor_free=opt.anchor_free,
-                end2end=opt.end2end
-                )
-    print(best_MR)
-    save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=True))  # increment run
-    save_dir.mkdir(parents=True, exist_ok=True)  # make dir
-    with open(os.path.join(save_dir, 'MR-2.txt'),'w') as f:
-        f.write("Average Miss Rate  (MR) @ Reasonable         [ IoU=0.50      | height=[50:10000000000] | visibility=[0.65:10000000000.00] ] = {}%\n".format(best_MR[0]*100))
-        f.write("Average Miss Rate  (MR) @ Reasonable_small   [ IoU=0.50      | height=[50:75] | visibility=[0.65:10000000000.00] ] = {}%\n".format(best_MR[1]*100))
-        f.write("Average Miss Rate  (MR) @ Reasonable_occ=heavy [ IoU=0.50      | height=[50:10000000000] | visibility=[0.20:0.65] ] =  {}%\n".format(best_MR[2]*100))
-        f.write("Average Miss Rate  (MR) @ All                [ IoU=0.50      | height=[20:10000000000] | visibility=[0.20:10000000000.00] ] = {}%\n".format(best_MR[3]*100))
-        f.write("Precision:%.2f, Recall:%.2f, AP50:%.2f, AP:%.2f" % metric)
-    
-    # elif opt.task == 'speed':  # speed benchmarks
-    #     for w in opt.weights:
-    #         test(opt.data, w, opt.batch_size, opt.img_size, 0.25, 0.45, save_json=False, plots=False, v5_metric=opt.v5_metric)
+    if opt.task in ('train', 'val', 'test'):  # run normally
+        test(opt.data,
+             opt.weights,
+             opt.batch_size,
+             opt.img_size,
+             opt.conf_thres,
+             opt.iou_thres,
+             opt.save_json,
+             opt.single_cls,
+             opt.augment,
+             opt.verbose,
+             save_txt=opt.save_txt | opt.save_hybrid,
+             save_hybrid=opt.save_hybrid,
+             save_conf=opt.save_conf,
+             trace=not opt.no_trace,
+             v5_metric=opt.v5_metric
+             )
 
-    # elif opt.task == 'study':  # run over a range of settings and save/plot
-    #     # python test.py --task study --data coco.yaml --iou 0.65 --weights yolov7.pt
-    #     x = list(range(256, 1536 + 128, 128))  # x axis (image sizes)
-    #     for w in opt.weights:
-    #         f = f'study_{Path(opt.data).stem}_{Path(w).stem}.txt'  # filename to save to
-    #         y = []  # y axis
-    #         for i in x:  # img-size
-    #             print(f'\nRunning {f} point {i}...')
-    #             r, _, t = test(opt.data, w, opt.batch_size, i, opt.conf_thres, opt.iou_thres, opt.save_json,
-    #                            plots=False, v5_metric=opt.v5_metric)
-    #             y.append(r + t)  # results and times
-    #         np.savetxt(f, y, fmt='%10.4g')  # save
-    #     os.system('zip -r study.zip study_*.txt')
-    #     plot_study_txt(x=x)  # plot
+    elif opt.task == 'speed':  # speed benchmarks
+        for w in opt.weights:
+            test(opt.data, w, opt.batch_size, opt.img_size, 0.25, 0.45, save_json=False, plots=False, v5_metric=opt.v5_metric)
+
+    elif opt.task == 'study':  # run over a range of settings and save/plot
+        # python test.py --task study --data coco.yaml --iou 0.65 --weights yolov7.pt
+        x = list(range(256, 1536 + 128, 128))  # x axis (image sizes)
+        for w in opt.weights:
+            f = f'study_{Path(opt.data).stem}_{Path(w).stem}.txt'  # filename to save to
+            y = []  # y axis
+            for i in x:  # img-size
+                print(f'\nRunning {f} point {i}...')
+                r, _, t = test(opt.data, w, opt.batch_size, i, opt.conf_thres, opt.iou_thres, opt.save_json,
+                               plots=False, v5_metric=opt.v5_metric)
+                y.append(r + t)  # results and times
+            np.savetxt(f, y, fmt='%10.4g')  # save
+        os.system('zip -r study.zip study_*.txt')
+        plot_study_txt(x=x)  # plot
