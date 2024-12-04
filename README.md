@@ -6,11 +6,11 @@ The main ideas are as follows:
 - Visible-guided label assignment: Constrains the number and positions of extremely hard positive samples.
 ## Training anchor-based
 ```
-python train_aux_MR.py --workers 8 --device 2 --batch-size 2 --data data/CityPerson_fg.yaml --img 2048 2048 --cfg cfg/training/VGPD_ab.yaml --weights '' --name VGPD_ab --epochs 300 --hyp data/hyp.scratch.rep.yaml --adam
+python train_ab.py --workers 8 --device 2 --batch-size 2 --data data/CityPerson.yaml --img 2048 2048 --cfg cfg/training/VGPD_aux_ab.yaml --weights '' --name VGPD_ab --epochs 300 --hyp data/hyp.scratch.rep.yaml --adam
 ```
 ## Training anchor-free
 ```
-python train_anchor_free.py --workers 8 --device 2 --batch-size 2 --data data/CityPerson_fg.yaml --img 2048 2048 --cfg anchor_free/VGPD_aux_af.yaml --weights '' --name VGPD_aux_af --epochs 500 --hyp data/hyp.scratch.rep.yaml --adam --project runs/anchor_free
+python train_anchor_free.py --workers 8 --device 2 --batch-size 2 --data data/CityPerson.yaml --img 2048 2048 --cfg cfg/training/VGPD_aux_af.yaml --weights '' --name VGPD_aux_af --epochs 500 --hyp data/hyp.scratch.rep.yaml --adam
 ```
 ## Test anchor-based
 ```
