@@ -14,7 +14,7 @@ from utils.general import make_divisible, check_file, set_logging, check_version
 from utils.torch_utils import time_synchronized, fuse_conv_and_bn, model_info, scale_img, initialize_weights, \
     select_device, copy_attr
 from utils.loss import SigmoidBin
-from utils.tal.anchor_generator import make_anchors, dist2bbox, distoff2bbox
+from anchor_free.tal.anchor_generator import make_anchors, dist2bbox, distoff2bbox
 import torch.nn.functional as F
 
 try:
@@ -1152,7 +1152,7 @@ class Model(nn.Module):
 
             if self.traced:
                 if isinstance(m, Detect) or isinstance(m, IDetect) or isinstance(m, IAuxDetect) or isinstance(m, IKeypoint) \
-                    or isinstance(m, IAuxDetect_triple) or isinstance(m, IAuxDetect_vis) isinstance(m, (IV6Detect, AuxDetect_AF, AuxDetect_AF_e2e, AfDetect)):
+                    or isinstance(m, IAuxDetect_triple) or isinstance(m, IAuxDetect_vis) or isinstance(m, (IV6Detect, AuxDetect_AF, AuxDetect_AF_e2e, AfDetect)):
                     break
 
             if profile:

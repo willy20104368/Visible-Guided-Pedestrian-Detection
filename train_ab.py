@@ -347,8 +347,8 @@ def train(hyp, opt, device, tb_writer=None):
     scheduler.last_epoch = start_epoch - 1  # do not move
     scaler = amp.GradScaler(enabled=cuda)
     if hyp['loss_rep'] == 1:
-            compute_loss_ota = ComputeLossAuxOTA_v2_rep(model, visible= not opt.noVis)
-        logger.info('Using Rep loss')
+        compute_loss_ota = ComputeLossAuxOTA_v2_rep(model, visible= not opt.noVis)
+        logger.info("Using Rep loss")
         if hyp['alpha'] == 0:
             logger.info("Only use Rep_Box loss")
     else:
